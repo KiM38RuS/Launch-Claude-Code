@@ -2,19 +2,21 @@
 ; Claude Code Launcher with Omniroute
 ; ============================================
 
-#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2+
 #SingleInstance Force
 #NoTrayIcon
 
 ;@Ahk2Exe-SetName Claude Code Launcher
 ;@Ahk2Exe-SetDescription Лаунчер для Claude Code через Omniroute
-;@Ahk2Exe-SetVersion 1.3
+;@Ahk2Exe-SetVersion 1.2.0
 
 ; === ГОРЯЧИЕ КЛАВИШИ ===
+#HotIf WinActive("ahk_id " mainGui.Hwnd)
 F5::Reload
+#HotIf
 
 ; === ВЕРСИЯ ===
-SCRIPT_VERSION := "v1.3"
+SCRIPT_VERSION := "v1.2.0"
 
 ; === НАСТРОЙКИ ===
 MAX_HISTORY := 10  ; Максимальное количество папок в истории
@@ -22,7 +24,7 @@ TIMEOUT_SECONDS := 30  ; Таймаут ожидания запуска Omnirout
 HISTORY_FILE := A_ScriptDir "\cc_history.txt"
 CLAUDE_SESSIONS_DIR := EnvGet("USERPROFILE") "\.claude\sessions"  ; Папка с сессиями Claude Code
 USE_NEW_TAB := true  ; Запускать в новой вкладке Windows Terminal (Windows 11)
-ENABLE_LOGGING := true  ; Включить логирование (true/false)
+ENABLE_LOGGING := false  ; Включить логирование (true/false)
 LOG_FILE := A_ScriptDir "\cc_launcher.log"  ; Файл лога
 
 ; === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
@@ -36,6 +38,8 @@ global sessionBtnCounter := 0  ; Счётчик для уникальных им
 global wmiSink := ""  ; WMI Event Sink для отслеживания процессов
 global lastSessionsCount := 0  ; Последнее количество сессий для отслеживания изменений
 global sessionSearchTimers := Map()  ; Таймеры поиска session ID: путь -> {timer, knownFiles}
+global resetBtn := ""  ; Кнопка сброса сессии
+global folderInputDebounceTimer := ""  ; Таймер для debounce ввода папки
 
 ; === ОСНОВНАЯ ЛОГИКА ===
 Main()
@@ -123,7 +127,7 @@ SaveHistory(newFolder) {
 
 ; === GUI ДЛЯ ВЫБОРА ПАПКИ ===
 ShowFolderSelectionGUI() {
-    global selectedFolder, historyList, mainGui, sessionsContainer
+    global selectedFolder, historyList, mainGui, sessionsContainer, resetBtn, statusText
 
     mainGui := Gui("", "Запуск Claude Code " SCRIPT_VERSION)
     mainGui.SetFont("s10")
@@ -140,9 +144,16 @@ ShowFolderSelectionGUI() {
         folderCombo.Choose(1)
     }
 
+    ; Обработчик изменения текста в ComboBox (с debounce)
+    folderCombo.OnEvent("Change", (*) => OnFolderPathChange(folderCombo))
+
     ; Кнопка "Обзор"
     browseBtn := mainGui.Add("Button", "x+m yp-1 w80 h26", "Обзор...")
     browseBtn.OnEvent("Click", (*) => BrowseFolder(mainGui, folderCombo))
+
+    ; Текстовое поле для статуса
+    statusText := mainGui.Add("Text", "x10 y70 w490 h20 +Center", "")
+    statusText.SetFont("s9 bold")
 
     ; Текстовое поле для статуса
     statusText := mainGui.Add("Text", "x10 y70 w490 h20 +Center", "")
@@ -155,20 +166,122 @@ ShowFolderSelectionGUI() {
         useNewTabCheckbox.Value := USE_NEW_TAB
     }
 
-    ; Кнопки Запустить и Отмена
-    launchBtn := mainGui.Add("Button", "x330 y130 w80 h30 Default", "Запустить")
+    ; Чекбокс для режима пропуска разрешений
+    skipPermissionsCheckbox := mainGui.Add("Checkbox", "x10 y120 vSkipPermissions", "Запустить в режиме пропуска разрешений")
+    skipPermissionsCheckbox.Value := false
+
+    ; Кнопки Сброс, Запустить и Закрыть
+    resetBtn := mainGui.Add("Button", "x10 y150 w80 h30", "Сброс")
+    resetBtn.OnEvent("Click", (*) => ResetSession(folderCombo, statusText))
+    resetBtn.ToolTip := "Удаляет сохранённую сессию для выбранной папки.`nПри следующем запуске откроется чистая сессия.`nИспользуйте для исправления ошибки 'No conversation found'."
+
+    launchBtn := mainGui.Add("Button", "x330 y150 w80 h30 Default", "Запустить")
     launchBtn.OnEvent("Click", (*) => OnLaunchClick(mainGui, folderCombo, launchBtn, cancelBtn, statusText))
 
-    cancelBtn := mainGui.Add("Button", "x+m y130 w80 h30", "Закрыть")
+    cancelBtn := mainGui.Add("Button", "x+m y150 w80 h30", "Закрыть")
     cancelBtn.OnEvent("Click", (*) => ExitApp())
 
     ; Контейнер для активных сессий
-    mainGui.Add("Text", "x10 y170 w490 h1 0x10")  ; Разделитель
-    mainGui.Add("Text", "x10 y175", "Активные сессии:")
-    sessionsContainer := mainGui.Add("Text", "x10 y200 w490 h20", "")
+    mainGui.Add("Text", "x10 y190 w490 h1 0x10")  ; Разделитель
+    mainGui.Add("Text", "x10 y195", "Активные сессии:")
+    sessionsContainer := mainGui.Add("Text", "x10 y220 w490 h20", "")
 
     mainGui.OnEvent("Close", (*) => ExitApp())
-    mainGui.Show("w510 h230")
+    mainGui.Show("w510 h250")
+
+    ; Проверяем состояние кнопки "Сброс" при запуске
+    UpdateResetButtonState(folderCombo)
+}
+
+; === СБРОС СЕССИИ ===
+ResetSession(folderCombo, statusText) {
+    global CLAUDE_SESSIONS_DIR, mainGui
+
+    folderPath := folderCombo.Text
+    if (folderPath = "") {
+        MsgBox("Введите путь к папке", "Ошибка", "Icon!")
+        return
+    }
+
+    ; Нормализуем путь
+    normalizedPath := StrLower(StrReplace(folderPath, "/", "\"))
+    Log("Сброс сессии для папки: " normalizedPath)
+
+    ; Ищем JSON файл для этой папки
+    foundFile := ""
+    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+        try {
+            content := FileRead(A_LoopFileFullPath, "UTF-8")
+            if RegExMatch(content, '"cwd"\s*:\s*"([^"]+)"', &cwdMatch) {
+                fileCwd := StrLower(StrReplace(cwdMatch[1], "\\", "\"))
+                if (fileCwd = normalizedPath) {
+                    foundFile := A_LoopFileFullPath
+                    break
+                }
+            }
+        }
+    }
+
+    if (foundFile = "") {
+        MsgBox("Сессия для этой папки не найдена", "Информация", "Iconi")
+        Log("JSON файл сессии не найден для папки: " normalizedPath)
+        return
+    }
+
+    ; Проверяем настройку "Больше не спрашивать"
+    dontAskAgain := IniRead(A_ScriptDir "\cc_launcher.ini", "Settings", "ResetDontAsk", "0")
+
+    if (dontAskAgain != "1") {
+        ; Создаём диалоговое окно с чекбоксом
+        confirmGui := Gui("+Owner" mainGui.Hwnd " +ToolWindow", "Подтверждение")
+        confirmGui.SetFont("s10")
+        confirmGui.Add("Text", "x10 y10 w300", "Удалить сохранённую сессию для этой папки?`n`nПри следующем запуске откроется чистая сессия.")
+
+        dontAskCB := confirmGui.Add("Checkbox", "x10 y+10", "Больше не спрашивать")
+
+        yesBtn := confirmGui.Add("Button", "x10 y+20 w145 h30 Default", "Да")
+        noBtn := confirmGui.Add("Button", "x+10 yp w145 h30", "Нет")
+
+        result := ""
+        yesBtn.OnEvent("Click", (*) => (result := "Yes", confirmGui.Destroy()))
+        noBtn.OnEvent("Click", (*) => (result := "No", confirmGui.Destroy()))
+        confirmGui.OnEvent("Close", (*) => (result := "No", confirmGui.Destroy()))
+        confirmGui.OnEvent("Escape", (*) => (result := "No", confirmGui.Destroy()))
+
+        mainGui.Opt("+Disabled")
+        confirmGui.Show()
+
+        ; Ждём закрытия окна
+        WinWaitClose("ahk_id " confirmGui.Hwnd)
+        mainGui.Opt("-Disabled")
+
+        if (result = "No") {
+            return
+        }
+
+        ; Сохраняем настройку "Больше не спрашивать"
+        if (dontAskCB.Value) {
+            IniWrite("1", A_ScriptDir "\cc_launcher.ini", "Settings", "ResetDontAsk")
+        }
+    }
+
+    ; Удаляем файл
+    try {
+        FileDelete(foundFile)
+        statusText.Value := "Сессия успешно сброшена!"
+        statusText.SetFont("cGreen")
+        Log("JSON файл сессии удалён: " foundFile)
+
+        ; Очищаем сообщение через 3 секунды
+        SetTimer(() => (statusText.Value := "", statusText.SetFont("cBlack")), -3000)
+    } catch as err {
+        statusText.Value := "Ошибка удаления файла сессии"
+        statusText.SetFont("cRed")
+        Log("Ошибка удаления файла: " err.Message, "ERROR")
+
+        ; Очищаем сообщение через 3 секунды
+        SetTimer(() => (statusText.Value := "", statusText.SetFont("cBlack")), -3000)
+    }
 }
 
 ; === ОБРАБОТЧИК КНОПКИ "ОБЗОР" ===
@@ -177,7 +290,56 @@ BrowseFolder(guiObj, folderCombo) {
     selectedPath := DirSelect("*" startPath, 3, "Выберите папку для Claude Code")
     if (selectedPath != "") {
         folderCombo.Text := selectedPath
+        UpdateResetButtonState(folderCombo)
     }
+}
+
+; === ОБРАБОТЧИК ИЗМЕНЕНИЯ ПУТИ К ПАПКЕ (С DEBOUNCE) ===
+OnFolderPathChange(folderCombo) {
+    global folderInputDebounceTimer
+
+    ; Останавливаем предыдущий таймер
+    if (folderInputDebounceTimer != "") {
+        SetTimer(folderInputDebounceTimer, 0)
+    }
+
+    ; Создаём новый таймер с задержкой 500 мс
+    folderInputDebounceTimer := () => UpdateResetButtonState(folderCombo)
+    SetTimer(folderInputDebounceTimer, -500)
+}
+
+; === ОБНОВЛЕНИЕ СОСТОЯНИЯ КНОПКИ "СБРОС" ===
+UpdateResetButtonState(folderCombo) {
+    global resetBtn, CLAUDE_SESSIONS_DIR
+
+    folderPath := folderCombo.Text
+
+    ; Если путь пустой, отключаем кнопку
+    if (folderPath = "") {
+        resetBtn.Enabled := false
+        return
+    }
+
+    ; Нормализуем путь
+    normalizedPath := StrLower(StrReplace(folderPath, "/", "\"))
+
+    ; Ищем JSON файл для этой папки
+    foundFile := false
+    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+        try {
+            content := FileRead(A_LoopFileFullPath, "UTF-8")
+            if RegExMatch(content, '"cwd"\s*:\s*"([^"]+)"', &cwdMatch) {
+                fileCwd := StrLower(StrReplace(cwdMatch[1], "\\", "\"))
+                if (fileCwd = normalizedPath) {
+                    foundFile := true
+                    break
+                }
+            }
+        }
+    }
+
+    ; Включаем или отключаем кнопку в зависимости от результата
+    resetBtn.Enabled := foundFile
 }
 
 ; === ПРОВЕРКА ВЕРСИИ WINDOWS ===
@@ -370,13 +532,28 @@ LaunchClaudeCode(statusText, guiObj, cancelBtn, launchBtn) {
         useNewTab := false
     }
 
+    ; Получаем значение чекбокса пропуска разрешений
+    skipPermissions := false
+    try {
+        skipPermissions := guiObj["SkipPermissions"].Value
+    } catch {
+        skipPermissions := false
+    }
+
+    ; Добавляем флаг пропуска разрешений, если чекбокс активен
+    permissionsFlag := ""
+    if (skipPermissions) {
+        permissionsFlag := " --dangerously-skip-permissions"
+        Log("Режим пропуска разрешений активирован")
+    }
+
     Log("Режим запуска: " (useNewTab ? "новая вкладка Windows Terminal" : "новое окно cmd"))
 
     try {
         if (useNewTab) {
-            Run('wt.exe -w 0 nt -d "' selectedFolder '" cmd /k "cc' resumeCmd '"', , , &cmdPID)
+            Run('wt.exe -w 0 nt -d "' selectedFolder '" cmd /k "cc' resumeCmd permissionsFlag '"', , , &cmdPID)
         } else {
-            Run('cmd.exe /k "cd /d "' selectedFolder '" && cc' resumeCmd '"', , , &cmdPID)
+            Run('cmd.exe /k "cd /d "' selectedFolder '" && cc' resumeCmd permissionsFlag '"', , , &cmdPID)
         }
 
         Log("Claude Code запущен с PID: " cmdPID)
@@ -407,12 +584,14 @@ LaunchClaudeCode(statusText, guiObj, cancelBtn, launchBtn) {
 FindExistingSession(folderPath) {
     global CLAUDE_SESSIONS_DIR
 
-    normalizedPath := StrReplace(folderPath, "/", "\")
+    ; Нормализуем путь: заменяем / на \, приводим к нижнему регистру
+    normalizedPath := StrLower(StrReplace(folderPath, "/", "\"))
     Log("Поиск существующей сессии для: " normalizedPath)
 
     Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
-            content := FileRead(A_LoopFileFullPath)
+            ; Читаем файл в UTF-8 кодировке
+            content := FileRead(A_LoopFileFullPath, "UTF-8")
             Log("Чтение файла: " A_LoopFileName)
 
             if RegExMatch(content, '"cwd"\s*:\s*"([^"]+)"', &cwdMatch) {
@@ -420,6 +599,8 @@ FindExistingSession(folderPath) {
                 Log("Найден cwd в файле (до замены): " fileCwd)
                 ; Заменяем экранированные слеши из JSON (\\) на обычные (\)
                 fileCwd := StrReplace(fileCwd, "\\", "\")
+                ; Приводим к нижнему регистру для сравнения
+                fileCwd := StrLower(fileCwd)
                 Log("Найден cwd в файле (после замены): " fileCwd)
                 Log("Сравнение: [" normalizedPath "] == [" fileCwd "]")
 
@@ -640,6 +821,9 @@ CloseSession(folderPath, pid) {
         return
     }
 
+    ; Вызываем SessionEnd хук, если он настроен
+    CallSessionEndHook(folderPath, sessionInfo.sessionId)
+
     ; Закрываем окно (просто закрываем, без Ctrl+C, чтобы JSON-файл остался)
     try {
         hwnd := WinExist("ahk_pid " pid)
@@ -775,6 +959,65 @@ SearchSessionIdTimer(folderPath) {
         Log("Таймаут поиска session ID для: " folderPath, "WARN")
         SetTimer(searchInfo.timer, 0)
         sessionSearchTimers.Delete(folderPath)
+    }
+}
+
+; === ВЫЗОВ SESSIONEND ХУКА ===
+CallSessionEndHook(folderPath, sessionId) {
+    global CLAUDE_SESSIONS_DIR
+
+    ; Проверяем, есть ли sessionId
+    if (sessionId = "") {
+        Log("SessionEnd хук не вызван: sessionId не найден")
+        return
+    }
+
+    ; Ищем JSON файл сессии
+    sessionFile := ""
+    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+        try {
+            content := FileRead(A_LoopFileFullPath, "UTF-8")
+            if InStr(content, sessionId) {
+                sessionFile := A_LoopFileFullPath
+                break
+            }
+        }
+    }
+
+    if (sessionFile = "") {
+        Log("SessionEnd хук не вызван: JSON файл сессии не найден")
+        return
+    }
+
+    ; Проверяем, существует ли хук SessionEnd
+    hookPath := A_ScriptDir "\..\.claude\settings.json"
+    if !FileExist(hookPath) {
+        Log("SessionEnd хук не настроен (нет settings.json)")
+        return
+    }
+
+    try {
+        ; Читаем настройки хука
+        settingsContent := FileRead(hookPath, "UTF-8")
+        if !InStr(settingsContent, "SessionEnd") {
+            Log("SessionEnd хук не настроен в settings.json")
+            return
+        }
+
+        ; Извлекаем команду хука
+        if RegExMatch(settingsContent, '"SessionEnd"\s*:\s*"([^"]+)"', &hookMatch) {
+            hookCommand := hookMatch[1]
+            Log("Вызов SessionEnd хука: " hookCommand)
+
+            ; Формируем JSON для передачи хуку
+            hookInput := '{"transcriptPath":"' StrReplace(sessionFile, "\", "\\") '","sessionId":"' sessionId '"}'
+
+            ; Вызываем хук в фоновом режиме
+            Run('cmd /c echo ' hookInput ' | ' hookCommand, , "Hide")
+            Log("SessionEnd хук вызван успешно")
+        }
+    } catch as err {
+        Log("Ошибка вызова SessionEnd хука: " err.Message, "ERROR")
     }
 }
 
