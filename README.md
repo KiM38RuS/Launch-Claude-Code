@@ -11,8 +11,9 @@
 
 Если Claude Code ещё не установлен, воспользуйтесь инструкциями:
 
-* https://youtu.be/LkP6ocAoQkk
-* https://youtu.be/XykwVzBsWsI
+* https://youtu.be/LkP6ocAoQkk – *Valency Labs*
+* https://youtu.be/XykwVzBsWsI – *Бывший Скамер*
+* https://youtu.be/2k7UHNJBpyY – *Игорь Зуевич*
 
 В этих видео показано:
 
