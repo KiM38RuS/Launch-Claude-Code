@@ -1,5 +1,8 @@
 *.txt
+*.log
 /Test
 /Backup
+/.claude
 TEST_INSTRUCTIONS.md
-*.log
+WIKI.md
+ahk_step_wizard_template_v_2_fixed.ahk
