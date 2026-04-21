@@ -10,8 +10,13 @@
 ;@Ahk2Exe-SetDescription Лаунчер для Claude Code через Omniroute
 ;@Ahk2Exe-SetVersion 1.3.2
 
+; === ВЕРСИЯ ===
+SCRIPT_VERSION := "v1.3.2"
+
 ;@Ahk2Exe-IgnoreBegin
-TraySetIcon(A_ScriptDir "\Assets\LCC.ico")
+try {
+    TraySetIcon(A_ScriptDir "\Assets\LCC.ico")
+}
 ;@Ahk2Exe-IgnoreEnd
 
 ; === ОБРАБОТЧИК ОШИБОК ===
@@ -41,9 +46,6 @@ LogErrorToFile(exception, mode) {
 F5::Reload
 #HotIf
 
-; === ВЕРСИЯ ===
-SCRIPT_VERSION := "v1.3.2"
-
 ; === НАСТРОЙКИ ===
 MAX_HISTORY := 10  ; Максимальное количество папок в истории
 TIMEOUT_SECONDS := 30  ; Таймаут ожидания запуска Omniroute (в секундах)
@@ -59,10 +61,8 @@ global historyList := []
 global activeSessions := Map()  ; Карта активных сессий: путь -> {pid, sessionId}
 global mainGui := ""
 global sessionsContainer := ""
-global isShuttingDown := false
 global sessionBtnCounter := 0  ; Счётчик для уникальных имён кнопок
 global wmiSink := ""  ; WMI Event Sink для отслеживания процессов
-global lastSessionsCount := 0  ; Последнее количество сессий для отслеживания изменений
 global sessionSearchTimers := Map()  ; Таймеры поиска session ID: путь -> {timer, knownFiles}
 global resetBtn := ""  ; Кнопка сброса сессии
 global folderInputDebounceTimer := ""  ; Таймер для debounce ввода папки
@@ -93,9 +93,6 @@ Main() {
 
     ; Загружаем историю папок
     LoadHistory()
-
-    ; Регистрируем обработчик завершения работы
-    OnExit(OnShutdown)
 
     ; Восстанавливаем активные сессии
     RestoreActiveSessions()
@@ -237,11 +234,12 @@ ShowFolderSelectionGUI() {
     mainGui := Gui("", "Claude Code Launcher " SCRIPT_VERSION)
     mainGui.SetFont("s10")
 
+    ; === СЕКЦИЯ 1: ВЫБОР ПАПКИ ===
     ; Текст
-    mainGui.Add("Text", "x10 y10", "Выберите папку для запуска Claude Code:")
+    mainGui.Add("Text", "ym+5", "Выберите папку для запуска Claude Code:")
 
     ; ComboBox с историей
-    folderCombo := mainGui.Add("ComboBox", "x10 y35 w400 vFolderPath")
+    folderCombo := mainGui.Add("ComboBox", "xs y+m w382 vFolderPath")
     if (historyList.Length > 0) {
         for folder in historyList {
             folderCombo.Add([folder])
@@ -253,20 +251,19 @@ ShowFolderSelectionGUI() {
     folderCombo.OnEvent("Change", (*) => OnFolderPathChange(folderCombo))
 
     ; Кнопка "Обзор"
-    browseBtn := mainGui.Add("Button", "x+m yp-1 w80 h26", "Обзор...")
+    browseBtn := mainGui.Add("Button", "x+5 y35 h26", "Обзор...")
     browseBtn.OnEvent("Click", (*) => BrowseFolder(mainGui, folderCombo))
 
-    ; Текстовое поле для статуса
-    statusText := mainGui.Add("Text", "x10 y70 w490 h20 +Center", "")
-    statusText.SetFont("s9 bold")
+    ; Разделитель 1
+    ; mainGui.Add("Text", "x15 y75 w520 h1 0x10")
 
-    ; Текстовое поле для статуса
-    statusText := mainGui.Add("Text", "x10 y70 w490 h20 +Center", "")
-    statusText.SetFont("s9 bold")
+    ; === СЕКЦИЯ 2: НАСТРОЙКИ ===
+    ; GroupBox для настроек
+    mainGui.Add("GroupBox", "xs y+m w330 r3 Section", "Настройки запуска")
 
     ; Чекбокс для выбора режима запуска
     isWin11 := IsWindows11()
-    useNewTabCheckbox := mainGui.Add("Checkbox", "x10 y100 vUseNewTab", "Запускать в новой вкладке (для Windows 11)")
+    useNewTabCheckbox := mainGui.Add("Checkbox", "xp+10 yp+23 vUseNewTab", "Запускать в новой вкладке (для Windows 11)")
     useNewTabCheckbox.Value := USE_NEW_TAB
     useNewTabCheckbox.OnEvent("Click", (*) => IniWrite(useNewTabCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "UseNewTab"))
 
@@ -276,40 +273,49 @@ ShowFolderSelectionGUI() {
     }
 
     ; Чекбокс для загрузки прошлой сессии
-    loadSessionCheckbox := mainGui.Add("Checkbox", "x10 y120 vLoadSession", "Загружать прошлую сессию")
+    loadSessionCheckbox := mainGui.Add("Checkbox", "xp y+5 vLoadSession", "Загружать прошлую сессию")
     loadSessionCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "LoadSession", "1") = "1"
     loadSessionCheckbox.OnEvent("Click", (*) => IniWrite(loadSessionCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "LoadSession"))
 
     ; Чекбокс для режима пропуска разрешений
-    skipPermissionsCheckbox := mainGui.Add("Checkbox", "x10 y140 vSkipPermissions", "Запустить в режиме пропуска разрешений")
-    ; Загружаем сохранённое состояние
+    skipPermissionsCheckbox := mainGui.Add("Checkbox", "xp y+5 vSkipPermissions", "Запустить в режиме пропуска разрешений")
     skipPermissionsCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "SkipPermissions", "0") = "1"
     skipPermissionsCheckbox.OnEvent("Click", (*) => OnSkipPermissionsClick(skipPermissionsCheckbox, mainGui))
 
-    ; Кнопки Сброс, Запустить и Закрыть
-    resetBtn := mainGui.Add("Button", "x10 y170 w80 h30", "Сброс")
+    ; Кнопка "Сброс"
+    resetBtn := mainGui.Add("Button", "xp+359 yp-44 w86 h30", "Сброс")
     resetBtn.OnEvent("Click", (*) => ResetSession(folderCombo, statusText))
-
-    launchBtn := mainGui.Add("Button", "x330 y170 w80 h30 Default", "Запустить")
+    
+    ; Кнопки Запустить и Закрыть
+    launchBtn := mainGui.Add("Button", "xp y+m h30 Default", "Запустить")
     launchBtn.OnEvent("Click", (*) => OnLaunchClick(mainGui, folderCombo, launchBtn, cancelBtn, statusText))
 
-    cancelBtn := mainGui.Add("Button", "x+m y170 w80 h30", "Закрыть")
+    cancelBtn := mainGui.Add("Button", "xp+0 yp+0 w0 h30", "Закрыть")
     cancelBtn.OnEvent("Click", (*) => ExitApp())
 
-    ; Контейнер для активных сессий
-    mainGui.Add("Text", "x10 y210 w490 h1 0x10")  ; Разделитель
-    mainGui.Add("Text", "x10 y221", "Активные сессии:")
-    sessionsContainer := mainGui.Add("Text", "x10 y226 w490 h20", "")
+    ; Разделитель 2
+    mainGui.Add("Text", "xm y+7 w457 h1 0x10")
+
+    ; === СЕКЦИЯ 3: СТАТУС ===
+    ; Текстовое поле для статуса (увеличенная высота)
+    statusText := mainGui.Add("Text", "xm y+15 w455 h30 +Center", "")
+    statusText.SetFont("s10 bold")
+
+    ; === СЕКЦИЯ 5: АКТИВНЫЕ СЕССИИ ===
+    ; Разделитель 4
+    mainGui.Add("Text", "xm y+0 w457 h1 0x10")
+    mainGui.Add("Text", "xm y+0", "Активные сессии:")
+    sessionsContainer := mainGui.Add("Text", "xm w455 h34 -Center 0x200", "")
 
     ; Загружаем сохранённую позицию окна
     savedX := IniRead(CONFIG_FILE, "Window", "X", "")
     savedY := IniRead(CONFIG_FILE, "Window", "Y", "")
 
     if (savedX != "" && savedY != "" && IsInteger(savedX) && IsInteger(savedY)) {
-        mainGui.Show("x" savedX " y" savedY " w510 h250")
+        mainGui.Show("x" savedX " y" savedY " w478")
         Log("Окно показано в сохранённой позиции: X=" savedX ", Y=" savedY)
     } else {
-        mainGui.Show("w510 h250")
+        mainGui.Show("w478")
         Log("Окно показано в позиции по умолчанию")
     }
 
@@ -677,22 +683,7 @@ LaunchProcess(statusText, guiObj, launchBtn, cancelBtn) {
 
 ; === ПРОВЕРКА, ЗАПУЩЕН ЛИ OMNIROUTE ===
 IsOmnirouteRunning() {
-    ; Метод 1: Реальная проверка доступности сервера через HTTP-запрос
-    /* try {
-        http := ComObject("WinHttp.WinHttpRequest.5.1")
-        http.SetTimeouts(1000, 1000, 2000, 2000)  ; Короткие таймауты
-        http.Open("GET", "http://localhost:20128/health", false)
-        http.Send()
-
-        ; Если получили ответ (любой код), сервер работает
-        if (http.Status >= 200 && http.Status < 600) {
-            return true
-        }
-    } catch {
-        ; Если запрос не прошёл, пробуем другие методы
-    } */
-
-    ; Метод 2: Проверяем процессы node.exe на наличие omniroute в командной строке
+    ; Проверяем процессы node.exe на наличие omniroute в командной строке
     try {
         result := ComObjGet("winmgmts:").ExecQuery("SELECT CommandLine FROM Win32_Process WHERE Name='node.exe'")
         for process in result {
@@ -907,7 +898,7 @@ ProcessEvent_OnObjectReady(objWbemObject, *) {
 
 ; === ПРОВЕРКА АКТИВНЫХ СЕССИЙ (FALLBACK) ===
 CheckActiveSessions() {
-    global activeSessions, lastSessionsCount
+    global activeSessions
 
     initialCount := activeSessions.Count
 
@@ -964,7 +955,11 @@ UpdateSessionsDisplay() {
     sessionsContainer.Value := ""
 
     ; Создаём кнопки для каждой сессии
-    yPos := 216
+    ; Извлекаем координаты
+    sessionsContainer.GetPos(, &y) 
+
+    ; Присваиваем значение вашей переменной
+    yPos := y
 
     for folderPath, sessionInfo in activeSessions {
         sessionBtnCounter++
@@ -984,12 +979,10 @@ UpdateSessionsDisplay() {
     WinGetPos(&winX, &winY, &winW, &winH, "ahk_id " mainGui.Hwnd)
     rect := Buffer(16)
     DllCall("dwmapi\DwmGetWindowAttribute", "Ptr", mainGui.Hwnd, "UInt", 9, "Ptr", rect, "UInt", 16)
-    frameY := winY - NumGet(rect, 4, "Int")
     frameHeight := NumGet(rect, 12, "Int") - NumGet(rect, 4, "Int") - winH
 
     ; Вычисляем новую высоту
-    newHeight := 246 + (activeSessions.Count * 35) + 10
-    heightDiff := newHeight - currentHeight
+    newHeight := yPos + 35 + 10
 
     ; Получаем размер рабочей области экрана (без панели задач)
     MonitorGetWorkArea(, , , , &workAreaBottom)
@@ -999,7 +992,7 @@ UpdateSessionsDisplay() {
     wasAtBottom := Abs(workAreaBottom - currentBottomEdge) <= 10
 
     Log("Расчёт позиции: currentY=" currentY ", currentHeight=" currentHeight ", newHeight=" newHeight)
-    Log("Рамка окна: frameY=" frameY ", frameHeight=" frameHeight)
+    Log("Рамка окна: frameHeight=" frameHeight)
     Log("workAreaBottom=" workAreaBottom ", currentBottomEdge=" currentBottomEdge ", wasAtBottom=" wasAtBottom)
 
     ; Если окно было вплотную к панели задач, позиционируем его вплотную после изменения
@@ -1010,7 +1003,7 @@ UpdateSessionsDisplay() {
             newY := 0
         }
         Log("Окно было вплотную к панели задач, позиционирование: Y " currentY " -> " newY)
-        mainGui.Move(currentX, newY, 530, newHeight)
+        mainGui.Move(currentX, newY, 493, newHeight)
     } else {
         ; Вычисляем, где будет нижний край окна после изменения размера
         newBottomEdge := currentY + newHeight + frameHeight
@@ -1023,10 +1016,10 @@ UpdateSessionsDisplay() {
                 newY := 0
             }
             Log("Окно выходит за пределы экрана, сдвиг вверх: Y " currentY " -> " newY)
-            mainGui.Move(currentX, newY, 530, newHeight)
+            mainGui.Move(currentX, newY, 493, newHeight)
         } else {
             Log("Изменение размера окна на высоту: " newHeight " (сдвиг не требуется)")
-            mainGui.Move(, , 530, newHeight)
+            mainGui.Move(, , 493, newHeight)
         }
     }
 }
@@ -1042,7 +1035,7 @@ CreateSessionButtons(folderPath, pid, folderName, yPos, counter) {
     global mainGui
 
     ; Кнопка сессии
-    sessionBtn := mainGui.Add("Button", "x10 y" yPos " w400 h30 vSessionBtn_" counter, folderName)
+    sessionBtn := mainGui.Add("Button", "x10 y" yPos " w428 h30 vSessionBtn_" counter, folderName)
 
     ; Создаём локальные копии для замыкания
     localPath := folderPath
@@ -1054,7 +1047,7 @@ CreateSessionButtons(folderPath, pid, folderName, yPos, counter) {
     sessionBtn.OnEvent("ContextMenu", (*) => OpenFolder(localPath))
 
     ; Кнопка закрытия
-    closeBtn := mainGui.Add("Button", "x+m yp w30 h30 vCloseBtn_" counter, "✖")
+    closeBtn := mainGui.Add("Button", "x+0 yp w30 h30 vCloseBtn_" counter, "✖")
     closeBtn.OnEvent("Click", (*) => CloseSession(localPath, localPid))
 }
 
@@ -1349,12 +1342,6 @@ CallSessionEndHook(folderPath, sessionId) {
     } catch as err {
         Log("Ошибка вызова SessionEnd хука: " err.Message, "ERROR")
     }
-}
-
-; === ОБРАБОТЧИК ЗАВЕРШЕНИЯ РАБОТЫ ===
-OnShutdown(ExitReason, ExitCode) {
-    ; Обработчик больше не нужен, так как сессии сохраняются автоматически в Claude
-    return
 }
 
 ; === ОБРАБОТЧИКИ TOOLTIP ===
