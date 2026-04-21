@@ -20,7 +20,7 @@
 
 ## Возможности
 
-<img src="Assets/Screenshot-v2.0.jpg" width="450" align="right">
+<img width="450" alt="Screenshot-v1 3 2" src="https://github.com/user-attachments/assets/d5eaac5d-dfa3-470e-87f2-02ee3d9e2bdf" align="right"/>
 
 **Основное:**
 * GUI с историей последних 10 папок
