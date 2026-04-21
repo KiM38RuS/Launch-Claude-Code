@@ -8,7 +8,11 @@
 
 ;@Ahk2Exe-SetName Claude Code Launcher
 ;@Ahk2Exe-SetDescription Лаунчер для Claude Code через Omniroute
-;@Ahk2Exe-SetVersion 1.3.0
+;@Ahk2Exe-SetVersion 1.3.2
+
+;@Ahk2Exe-IgnoreBegin
+TraySetIcon(A_ScriptDir "\Assets\LCC.ico")
+;@Ahk2Exe-IgnoreEnd
 
 ; === ОБРАБОТЧИК ОШИБОК ===
 OnError(LogErrorToFile)
@@ -38,14 +42,14 @@ F5::Reload
 #HotIf
 
 ; === ВЕРСИЯ ===
-SCRIPT_VERSION := "v1.3.0"
+SCRIPT_VERSION := "v1.3.2"
 
 ; === НАСТРОЙКИ ===
 MAX_HISTORY := 10  ; Максимальное количество папок в истории
 TIMEOUT_SECONDS := 30  ; Таймаут ожидания запуска Omniroute (в секундах)
 CONFIG_FILE := A_ScriptDir "\cc_launcher.ini"  ; Единый файл конфигурации
 CLAUDE_SESSIONS_DIR := EnvGet("USERPROFILE") "\.claude\sessions"  ; Папка с сессиями Claude Code
-USE_NEW_TAB := true  ; Запускать в новой вкладке Windows Terminal (Windows 11)
+USE_NEW_TAB := IniRead(CONFIG_FILE, "Settings", "UseNewTab", "1") = "1"  ; Запускать в новой вкладке Windows Terminal (Windows 11)
 ENABLE_LOGGING := true  ; Включить логирование (true/false)
 LOG_FILE := A_ScriptDir "\cc_launcher.log"  ; Файл лога
 
@@ -230,7 +234,7 @@ SaveHistory(newFolder) {
 ShowFolderSelectionGUI() {
     global selectedFolder, historyList, mainGui, sessionsContainer, resetBtn, statusText
 
-    mainGui := Gui("", "Запуск Claude Code " SCRIPT_VERSION)
+    mainGui := Gui("", "Claude Code Launcher " SCRIPT_VERSION)
     mainGui.SetFont("s10")
 
     ; Текст
@@ -260,34 +264,42 @@ ShowFolderSelectionGUI() {
     statusText := mainGui.Add("Text", "x10 y70 w490 h20 +Center", "")
     statusText.SetFont("s9 bold")
 
-    ; Чекбокс для выбора режима запуска (только для Windows 11)
+    ; Чекбокс для выбора режима запуска
     isWin11 := IsWindows11()
-    if (isWin11) {
-        useNewTabCheckbox := mainGui.Add("Checkbox", "x10 y100 vUseNewTab", "Запускать в новой вкладке")
-        useNewTabCheckbox.Value := USE_NEW_TAB
+    useNewTabCheckbox := mainGui.Add("Checkbox", "x10 y100 vUseNewTab", "Запускать в новой вкладке (для Windows 11)")
+    useNewTabCheckbox.Value := USE_NEW_TAB
+    useNewTabCheckbox.OnEvent("Click", (*) => IniWrite(useNewTabCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "UseNewTab"))
+
+    ; Делаем чекбокс неактивным в Windows 10
+    if (!isWin11) {
+        useNewTabCheckbox.Enabled := false
     }
 
+    ; Чекбокс для загрузки прошлой сессии
+    loadSessionCheckbox := mainGui.Add("Checkbox", "x10 y120 vLoadSession", "Загружать прошлую сессию")
+    loadSessionCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "LoadSession", "1") = "1"
+    loadSessionCheckbox.OnEvent("Click", (*) => IniWrite(loadSessionCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "LoadSession"))
+
     ; Чекбокс для режима пропуска разрешений
-    skipPermissionsCheckbox := mainGui.Add("Checkbox", "x10 y120 vSkipPermissions", "Запустить в режиме пропуска разрешений")
+    skipPermissionsCheckbox := mainGui.Add("Checkbox", "x10 y140 vSkipPermissions", "Запустить в режиме пропуска разрешений")
     ; Загружаем сохранённое состояние
     skipPermissionsCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "SkipPermissions", "0") = "1"
     skipPermissionsCheckbox.OnEvent("Click", (*) => OnSkipPermissionsClick(skipPermissionsCheckbox, mainGui))
 
     ; Кнопки Сброс, Запустить и Закрыть
-    resetBtn := mainGui.Add("Button", "x10 y150 w80 h30", "Сброс")
+    resetBtn := mainGui.Add("Button", "x10 y170 w80 h30", "Сброс")
     resetBtn.OnEvent("Click", (*) => ResetSession(folderCombo, statusText))
-    resetBtn.ToolTip := "Удаляет сохранённую сессию для выбранной папки.`nПри следующем запуске откроется чистая сессия.`nИспользуйте для исправления ошибки 'No conversation found'."
 
-    launchBtn := mainGui.Add("Button", "x330 y150 w80 h30 Default", "Запустить")
+    launchBtn := mainGui.Add("Button", "x330 y170 w80 h30 Default", "Запустить")
     launchBtn.OnEvent("Click", (*) => OnLaunchClick(mainGui, folderCombo, launchBtn, cancelBtn, statusText))
 
-    cancelBtn := mainGui.Add("Button", "x+m y150 w80 h30", "Закрыть")
+    cancelBtn := mainGui.Add("Button", "x+m y170 w80 h30", "Закрыть")
     cancelBtn.OnEvent("Click", (*) => ExitApp())
 
     ; Контейнер для активных сессий
-    mainGui.Add("Text", "x10 y190 w490 h1 0x10")  ; Разделитель
-    mainGui.Add("Text", "x10 y195", "Активные сессии:")
-    sessionsContainer := mainGui.Add("Text", "x10 y220 w490 h20", "")
+    mainGui.Add("Text", "x10 y210 w490 h1 0x10")  ; Разделитель
+    mainGui.Add("Text", "x10 y221", "Активные сессии:")
+    sessionsContainer := mainGui.Add("Text", "x10 y226 w490 h20", "")
 
     ; Загружаем сохранённую позицию окна
     savedX := IniRead(CONFIG_FILE, "Window", "X", "")
@@ -306,6 +318,10 @@ ShowFolderSelectionGUI() {
 
     ; Отслеживаем завершение перемещения окна через WM_EXITSIZEMOVE
     OnMessage(0x0232, WM_EXITSIZEMOVE)
+
+    ; Отслеживание наведения мыши для tooltip
+    OnMessage(0x0200, OnMouseMove)
+    OnMessage(0x0006, OnWindowDeactivate)
 
     ; Проверяем состояние кнопки "Сброс" при запуске
     UpdateResetButtonState(folderCombo)
@@ -450,7 +466,9 @@ ResetSession(folderCombo, statusText) {
         noBtn := confirmGui.Add("Button", "x+10 yp w145 h30", "Нет")
 
         result := ""
-        yesBtn.OnEvent("Click", (*) => (result := "Yes", confirmGui.Destroy()))
+        dontAskValue := 0
+
+        yesBtn.OnEvent("Click", (*) => (result := "Yes", dontAskValue := dontAskCB.Value, confirmGui.Destroy()))
         noBtn.OnEvent("Click", (*) => (result := "No", confirmGui.Destroy()))
         confirmGui.OnEvent("Close", (*) => (result := "No", confirmGui.Destroy()))
         confirmGui.OnEvent("Escape", (*) => (result := "No", confirmGui.Destroy()))
@@ -467,7 +485,7 @@ ResetSession(folderCombo, statusText) {
         }
 
         ; Сохраняем настройку "Больше не спрашивать"
-        if (dontAskCB.Value) {
+        if (dontAskValue) {
             IniWrite("1", CONFIG_FILE, "Settings", "ResetDontAsk")
         }
     }
@@ -720,15 +738,27 @@ LaunchClaudeCode(statusText, guiObj, cancelBtn, launchBtn) {
     }
 
     ; Ищем существующую сессию в JSON-файлах для восстановления
+    ; Получаем значение чекбокса загрузки сессии
+    loadSession := true
+    try {
+        loadSession := guiObj["LoadSession"].Value
+    } catch {
+        loadSession := true
+    }
+
     existingSessionId := FindExistingSession(selectedFolder)
     resumeCmd := ""
 
-    if (existingSessionId != "") {
+    if (loadSession && existingSessionId != "") {
         resumeCmd := " claude --resume " existingSessionId
         Log("Найдена существующая сессия для восстановления: " existingSessionId)
         Log("Команда восстановления: cc" resumeCmd)
     } else {
-        Log("Существующая сессия не найдена, запуск новой")
+        if (!loadSession) {
+            Log("Загрузка прошлой сессии отключена, запуск новой")
+        } else {
+            Log("Существующая сессия не найдена, запуск новой")
+        }
     }
 
     ; Получаем значение чекбокса из GUI (если он существует)
@@ -934,7 +964,7 @@ UpdateSessionsDisplay() {
     sessionsContainer.Value := ""
 
     ; Создаём кнопки для каждой сессии
-    yPos := 200
+    yPos := 216
 
     for folderPath, sessionInfo in activeSessions {
         sessionBtnCounter++
@@ -950,21 +980,44 @@ UpdateSessionsDisplay() {
     ; Получаем текущую позицию и размер окна
     mainGui.GetPos(&currentX, &currentY, &currentWidth, &currentHeight)
 
+    ; Получаем размер невидимой рамки окна
+    WinGetPos(&winX, &winY, &winW, &winH, "ahk_id " mainGui.Hwnd)
+    rect := Buffer(16)
+    DllCall("dwmapi\DwmGetWindowAttribute", "Ptr", mainGui.Hwnd, "UInt", 9, "Ptr", rect, "UInt", 16)
+    frameY := winY - NumGet(rect, 4, "Int")
+    frameHeight := NumGet(rect, 12, "Int") - NumGet(rect, 4, "Int") - winH
+
     ; Вычисляем новую высоту
-    newHeight := 230 + (activeSessions.Count * 35) + 10
+    newHeight := 246 + (activeSessions.Count * 35) + 10
     heightDiff := newHeight - currentHeight
 
-    ; Если окно увеличивается, проверяем, не выйдет ли оно за пределы экрана
-    if (heightDiff > 0) {
-        ; Получаем размер рабочей области экрана (без панели задач)
-        MonitorGetWorkArea(, , , , &workAreaBottom)
+    ; Получаем размер рабочей области экрана (без панели задач)
+    MonitorGetWorkArea(, , , , &workAreaBottom)
 
-        ; Вычисляем, где будет нижний край окна после увеличения
-        newBottomEdge := currentY + newHeight
+    ; Проверяем, было ли окно вплотную к панели задач (с учётом рамки и допуском 10 пикселей)
+    currentBottomEdge := currentY + currentHeight + frameHeight
+    wasAtBottom := Abs(workAreaBottom - currentBottomEdge) <= 10
+
+    Log("Расчёт позиции: currentY=" currentY ", currentHeight=" currentHeight ", newHeight=" newHeight)
+    Log("Рамка окна: frameY=" frameY ", frameHeight=" frameHeight)
+    Log("workAreaBottom=" workAreaBottom ", currentBottomEdge=" currentBottomEdge ", wasAtBottom=" wasAtBottom)
+
+    ; Если окно было вплотную к панели задач, позиционируем его вплотную после изменения
+    if (wasAtBottom) {
+        newY := workAreaBottom - newHeight - frameHeight
+        ; Проверяем, чтобы окно не вышло за верхнюю границу экрана
+        if (newY < 0) {
+            newY := 0
+        }
+        Log("Окно было вплотную к панели задач, позиционирование: Y " currentY " -> " newY)
+        mainGui.Move(currentX, newY, 530, newHeight)
+    } else {
+        ; Вычисляем, где будет нижний край окна после изменения размера
+        newBottomEdge := currentY + newHeight + frameHeight
 
         ; Если окно выходит за пределы рабочей области, сдвигаем его вверх
         if (newBottomEdge > workAreaBottom) {
-            newY := workAreaBottom - newHeight
+            newY := workAreaBottom - newHeight - frameHeight
             ; Проверяем, чтобы окно не вышло за верхнюю границу экрана
             if (newY < 0) {
                 newY := 0
@@ -975,9 +1028,6 @@ UpdateSessionsDisplay() {
             Log("Изменение размера окна на высоту: " newHeight " (сдвиг не требуется)")
             mainGui.Move(, , 530, newHeight)
         }
-    } else {
-        Log("Изменение размера окна на высоту: " newHeight)
-        mainGui.Move(, , 530, newHeight)
     }
 }
 
@@ -1088,7 +1138,25 @@ CloseSession(folderPath, pid) {
 
     ; Закрываем окно (просто закрываем, без Ctrl+C, чтобы JSON-файл остался)
     try {
+        ; Сначала пробуем найти окно по PID (для CMD процессов)
         hwnd := WinExist("ahk_pid " pid)
+
+        if (!hwnd) {
+            ; Если не найдено, ищем родительское окно CMD
+            ; (для случаев, когда PID - это node.exe)
+            try {
+                result := ComObjGet("winmgmts:").ExecQuery("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" pid)
+                for process in result {
+                    parentPid := process.ParentProcessId
+                    hwnd := WinExist("ahk_pid " parentPid)
+                    if (hwnd) {
+                        Log("Найдено родительское окно для закрытия: ParentPID=" parentPid)
+                        break
+                    }
+                }
+            }
+        }
+
         if hwnd {
             Log("Закрытие окна сессии")
             WinClose("ahk_id " hwnd)
@@ -1287,4 +1355,60 @@ CallSessionEndHook(folderPath, sessionId) {
 OnShutdown(ExitReason, ExitCode) {
     ; Обработчик больше не нужен, так как сессии сохраняются автоматически в Claude
     return
+}
+
+; === ОБРАБОТЧИКИ TOOLTIP ===
+OnMouseMove(wParam, lParam, msg, hwnd) {
+    static PrevHwnd := 0
+
+    ; Проверяем, активно ли окно
+    try {
+        ctrl := GuiCtrlFromHwnd(hwnd)
+        if (ctrl && ctrl.Gui.Hwnd != WinExist("A")) {
+            ToolTip()
+            PrevHwnd := 0
+            return
+        }
+    }
+
+    if (hwnd == PrevHwnd)
+        return
+    PrevHwnd := hwnd
+
+    try ctrl := GuiCtrlFromHwnd(hwnd)
+    catch {
+        ToolTip()
+        return
+    }
+
+    if (!ctrl) {
+        ToolTip()
+        return
+    }
+
+    text := ""
+
+    ; Определяем текст подсказки по типу и тексту контрола
+    if (ctrl.Type = "Button") {
+        if (ctrl.Text = "Сброс") {
+            text := "Удаляет сохранённую сессию для выбранной папки.`nПри следующем запуске откроется чистая сессия.`nИспользуйте для исправления ошибки 'No conversation found'."
+        }
+    } else if (ctrl.Type = "CheckBox") {
+        if (InStr(ctrl.Text, "Загружать прошлую сессию")) {
+            text := "Если выдаст ошибку, нажми кнопку 'Сброс'"
+        }
+    }
+
+    if (text != "") {
+        ToolTip(text)
+    } else {
+        ToolTip()
+    }
+}
+
+OnWindowDeactivate(wParam, lParam, msg, hwnd) {
+    ; Если окно потеряло активность, скрываем tooltip
+    if ((wParam & 0xFFFF) = 0) {
+        ToolTip()
+    }
 }

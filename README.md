@@ -1,4 +1,4 @@
-# Launch Claude Code<img width="128" alt="Claude free icon 2" src="https://github.com/user-attachments/assets/4d8f4512-1bff-4b90-9743-1aa611752d1a" align="left"/>
+# Claude Code Launcher<img width="128" alt="Claude free icon 2" src="https://github.com/user-attachments/assets/4d8f4512-1bff-4b90-9743-1aa611752d1a" align="left"/>
 
 
 Лаунчер для быстрого запуска **Claude Code** в нужной папке проекта с автоматическим запуском **Omniroute**.

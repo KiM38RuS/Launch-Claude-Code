@@ -10,9 +10,9 @@
 - Создавай резервные копии при критических изменениях
 
 ### Тестирование изменений
-- После внесения изменений в LaunchClaudeCode.ahk **всегда** запускай скрипт для проверки:
+- После внесения изменений в ClaudeCodeLauncher.ahk **всегда** запускай скрипт для проверки:
   ```bash
-  rm -f ahk_error.log && start "" "LaunchClaudeCode.ahk" && sleep 5 && cat ahk_error.log 2>/dev/null || echo "Ошибок не обнаружено"
+  rm -f ahk_error.log && start "" "ClaudeCodeLauncher.ahk" && sleep 5 && cat ahk_error.log 2>/dev/null || echo "Ошибок не обнаружено"
   ```
 - Проверяй лог на наличие ошибок интерпретатора
 - Убедись, что GUI открывается корректно
@@ -26,26 +26,26 @@
 - При достижении стабильной версии (перед началом новой фичи)
 
 **Как создавать бэкап:**
-1. Скопировать текущий `LaunchClaudeCode.ahk` в папку `Backup/`
-2. Переименовать копию, добавив версию: `LaunchClaudeCode X.Y.Z.ahk`
+1. Скопировать текущий `ClaudeCodeLauncher.ahk` в папку `Backup/`
+2. Переименовать копию, добавив версию: `ClaudeCodeLauncher X.Y.Z.ahk`
 3. Версия берётся из константы `SCRIPT_VERSION` в коде (например, "v1.2.0")
-4. Формат имени: `LaunchClaudeCode 1.2.0.ahk` (без префикса "v")
+4. Формат имени: `ClaudeCodeLauncher 1.2.0.ahk` (без префикса "v")
 
 **Команда для создания бэкапа:**
 ```bash
 # Получить текущую версию из скрипта
-version=$(grep 'SCRIPT_VERSION := "v' LaunchClaudeCode.ahk | sed 's/.*"v\(.*\)".*/\1/')
+version=$(grep 'SCRIPT_VERSION := "v' ClaudeCodeLauncher.ahk | sed 's/.*"v\(.*\)".*/\1/')
 # Создать бэкап
-cp LaunchClaudeCode.ahk "Backup/LaunchClaudeCode $version.ahk"
+cp ClaudeCodeLauncher.ahk "Backup/ClaudeCodeLauncher $version.ahk"
 ```
 
 **Пример структуры Backup/:**
 ```
 Backup/
-├── LaunchClaudeCode 1.0.ahk      (первая версия)
-├── LaunchClaudeCode 1.1.0.ahk    (добавлена новая функция)
-├── LaunchClaudeCode 1.1.1.ahk    (исправлен баг)
-└── LaunchClaudeCode 1.2.0.ahk    (текущая стабильная версия)
+├── ClaudeCodeLauncher 1.0.ahk      (первая версия)
+├── ClaudeCodeLauncher 1.1.0.ahk    (добавлена новая функция)
+├── ClaudeCodeLauncher 1.1.1.ahk    (исправлен баг)
+└── ClaudeCodeLauncher 1.2.0.ahk    (текущая стабильная версия)
 ```
 
 #### Инструкция по обновлению версии
@@ -83,7 +83,7 @@ Backup/
 
 6. **Создать git commit:**
    ```bash
-   git add LaunchClaudeCode.ahk CHANGELOG.md
+   git add ClaudeCodeLauncher.ahk CHANGELOG.md
    git commit -m "Bump version to X.Y.Za"
    # После тестирования:
    git commit -m "Release version X.Y.Z"
@@ -100,10 +100,6 @@ Backup/
 - Устанавливай необходимые пакеты и библиотеки автоматически
 - Обновляй зависимости при необходимости
 - Исправляй конфликты версий
-
-### Выполнение команд
-- Запускай тесты после изменений кода
-- Запускай линтеры и форматтеры
 
 ### Отладка и исправление
 - Автоматически исправляй найденные ошибки
