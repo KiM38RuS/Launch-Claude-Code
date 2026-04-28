@@ -1,15 +1,24 @@
-*.txt
+# Логи и временные файлы
 *.log
 *.ini
+*.txt
+
+# Временные и тестовые файлы
+TEST_INSTRUCTIONS.md
+TESTING_v1.3.1a.md
+AHK_ERROR_ANALYSIS_METHOD.md
+ahk_error_monitor.ahk
+ahk_step_wizard_template_v_2_fixed.ahk
+WIKI.md
+release_notes_*.md
+
+# Установочные файлы
+*.msi
+
+# Временные скриншоты
+Assets/Screenshot-unknown.png
+
+# Папки
 /Test
 /Backup
 /.claude
-TEST_INSTRUCTIONS.md
-WIKI.md
-ahk_step_wizard_template_v_2_fixed.ahk
-cc_launcher.log
-ahk_error.log
-AHK_ERROR_ANALYSIS_METHOD.md
-ahk_error_monitor.ahk
-gh_installer.msi
-TESTING_v1.3.1a.md
