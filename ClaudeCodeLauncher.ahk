@@ -8,11 +8,11 @@
 
 ;@Ahk2Exe-SetName Claude Code Launcher
 ;@Ahk2Exe-SetDescription Лаунчер для Claude Code через Omniroute
-;@Ahk2Exe-SetVersion 1.3.4
+;@Ahk2Exe-SetVersion 1.3.5
 ;@Ahk2Exe-SetMainIcon Assets\LCC.ico
 
 ; === ВЕРСИЯ ===
-SCRIPT_VERSION := "v1.3.4"
+SCRIPT_VERSION := "v1.3.5"
 
 ;@Ahk2Exe-IgnoreBegin
 try {
@@ -44,7 +44,7 @@ LogErrorToFile(exception, mode) {
 
 ; === ГОРЯЧИЕ КЛАВИШИ ===
 #HotIf WinActive("ahk_id " mainGui.Hwnd)
-F5::Reload
+F5:: Reload
 #HotIf
 
 ; === НАСТРОЙКИ ===
@@ -115,7 +115,7 @@ LoadHistory() {
     if FileExist(oldHistoryFile) {
         Log("Миграция истории из cc_history.txt")
         content := FileRead(oldHistoryFile)
-        Loop Parse, content, "`n", "`r" {
+        loop parse, content, "`n", "`r" {
             if (A_LoopField != "" && DirExist(A_LoopField)) {
                 historyList.Push(A_LoopField)
             }
@@ -151,7 +151,7 @@ LoadHistory() {
     }
 
     ; Читаем историю из INI файла
-    Loop 10 {
+    loop 10 {
         folder := IniRead(CONFIG_FILE, "History", "Folder" A_Index, "")
         if (folder != "" && DirExist(folder)) {
             historyList.Push(folder)
@@ -166,7 +166,7 @@ RestoreActiveSessions() {
     Log("=== Восстановление активных сессий ===")
 
     ; Шаг 1: Читаем все JSON файлы сессий
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
             content := FileRead(A_LoopFileFullPath, "UTF-8")
 
@@ -182,10 +182,18 @@ RestoreActiveSessions() {
 
                         ; Проверяем, существует ли процесс с этим PID
                         if ProcessExist(pid) {
-                            activeSessions[folderPath] := {pid: pid, sessionId: sessionId}
-                            Log("Восстановлена сессия из JSON: Папка=" folderPath ", PID=" pid ", SessionID=" sessionId)
+                            ; Находим соответствующий cmd.exe процесс
+                            cmdPid := FindCmdProcessByNodePid(pid)
+                            if (cmdPid > 0) {
+                                activeSessions[folderPath] := { pid: cmdPid, sessionId: sessionId }
+                                Log("Восстановлена сессия из JSON: Папка=" folderPath ", NodePID=" pid ", CmdPID=" cmdPid ", SessionID=" sessionId
+                                )
+                            } else {
+                                Log("Не найден cmd.exe для node.exe PID=" pid)
+                            }
                         } else {
-                            Log("Процесс не существует для сессии: PID=" pid ", Папка=" folderPath ", SessionID=" sessionId)
+                            Log("Процесс не существует для сессии: PID=" pid ", Папка=" folderPath ", SessionID=" sessionId
+                            )
                         }
                     }
                 }
@@ -197,7 +205,8 @@ RestoreActiveSessions() {
 
     ; Шаг 2: Ищем запущенные процессы Claude Code без JSON файлов
     try {
-        result := ComObjGet("winmgmts:").ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='node.exe'")
+        result := ComObjGet("winmgmts:").ExecQuery(
+            "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='node.exe'")
         for process in result {
             cmdLine := process.CommandLine
 
@@ -214,7 +223,7 @@ RestoreActiveSessions() {
 
                     if (folderPath != "" && !activeSessions.Has(folderPath)) {
                         ; Добавляем сессию без sessionId (он будет найден позже)
-                        activeSessions[folderPath] := {pid: pid, sessionId: ""}
+                        activeSessions[folderPath] := { pid: pid, sessionId: "" }
                         Log("Восстановлена сессия из процесса: Папка=" folderPath ", PID=" pid ", Имя=" sessionName)
 
                         ; Запускаем поиск session ID
@@ -228,6 +237,32 @@ RestoreActiveSessions() {
     }
 
     Log("Восстановлено сессий: " activeSessions.Count)
+}
+
+; === ПОИСК CMD.EXE ПО PID NODE.EXE ===
+FindCmdProcessByNodePid(nodePid) {
+    try {
+        ; Получаем родительский процесс node.exe (это должен быть cmd.exe)
+        result := ComObjGet("winmgmts:").ExecQuery("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" nodePid
+        )
+        for process in result {
+            parentPid := process.ParentProcessId
+
+            ; Проверяем, что родитель - это cmd.exe
+            parentResult := ComObjGet("winmgmts:").ExecQuery("SELECT Name FROM Win32_Process WHERE ProcessId=" parentPid
+            )
+            for parentProc in parentResult {
+                if (parentProc.Name = "cmd.exe") {
+                    Log("Найден cmd.exe (PID=" parentPid ") для node.exe (PID=" nodePid ")")
+                    return parentPid
+                }
+            }
+        }
+    } catch as err {
+        Log("Ошибка поиска cmd.exe для node.exe PID=" nodePid ": " err.Message, "ERROR")
+    }
+
+    return 0
 }
 
 ; === ПОИСК ПАПКИ ПО ИМЕНИ СЕССИИ ===
@@ -250,7 +285,8 @@ FindFolderBySessionName(sessionName, pid) {
             parentPid := process.ParentProcessId
 
             ; Получаем информацию о родительском процессе
-            parentResult := ComObjGet("winmgmts:").ExecQuery("SELECT CommandLine FROM Win32_Process WHERE ProcessId=" parentPid)
+            parentResult := ComObjGet("winmgmts:").ExecQuery("SELECT CommandLine FROM Win32_Process WHERE ProcessId=" parentPid
+            )
             for parentProcess in parentResult {
                 cmdLine := parentProcess.CommandLine
 
@@ -296,7 +332,7 @@ SaveHistory(newFolder) {
     }
 
     ; Сохраняем в INI файл
-    Loop MAX_HISTORY {
+    loop MAX_HISTORY {
         if (A_Index <= historyList.Length) {
             IniWrite(historyList[A_Index], CONFIG_FILE, "History", "Folder" A_Index)
         } else {
@@ -309,7 +345,7 @@ SaveHistory(newFolder) {
 ShowFolderSelectionGUI() {
     global selectedFolder, historyList, mainGui, sessionsContainer, resetBtn, statusText
 
-    mainGui := Gui("", "Claude Code Launcher " SCRIPT_VERSION)
+    mainGui := Gui(, "Claude Code Launcher " SCRIPT_VERSION)
     mainGui.SetFont("s10")
 
     ; === СЕКЦИЯ 1: ВЫБОР ПАПКИ ===
@@ -341,7 +377,8 @@ ShowFolderSelectionGUI() {
 
     ; Чекбокс для запуска в Windows Terminal (Windows 10)
     isWin11 := IsWindows11()
-    useTerminalCheckbox := mainGui.Add("Checkbox", "xp+10 yp+23 vUseTerminal", "Запускать сессию в Терминале (для Windows 10)")
+    useTerminalCheckbox := mainGui.Add("Checkbox", "xp+10 yp+23 vUseTerminal",
+        "Запускать сессию в Терминале (для Windows 10)")
     useTerminalCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "UseTerminal", "0") = "1"
     useTerminalCheckbox.OnEvent("Click", (*) => OnUseTerminalClick(useTerminalCheckbox, useNewTabCheckbox, statusText))
 
@@ -353,7 +390,8 @@ ShowFolderSelectionGUI() {
     ; Чекбокс для выбора режима запуска в новой вкладке
     useNewTabCheckbox := mainGui.Add("Checkbox", "xp y+5 vUseNewTab", "Запускать в новой вкладке (только в Терминале)")
     useNewTabCheckbox.Value := USE_NEW_TAB
-    useNewTabCheckbox.OnEvent("Click", (*) => IniWrite(useNewTabCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "UseNewTab"))
+    useNewTabCheckbox.OnEvent("Click", (*) => IniWrite(useNewTabCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings",
+        "UseNewTab"))
 
     ; Делаем чекбокс неактивным если не Windows 11 и не включен Windows Terminal
     if (!isWin11 && useTerminalCheckbox.Value = 0) {
@@ -363,17 +401,19 @@ ShowFolderSelectionGUI() {
     ; Чекбокс для загрузки прошлой сессии
     loadSessionCheckbox := mainGui.Add("Checkbox", "xp y+5 vLoadSession", "Загружать прошлую сессию")
     loadSessionCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "LoadSession", "1") = "1"
-    loadSessionCheckbox.OnEvent("Click", (*) => IniWrite(loadSessionCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings", "LoadSession"))
+    loadSessionCheckbox.OnEvent("Click", (*) => IniWrite(loadSessionCheckbox.Value ? "1" : "0", CONFIG_FILE, "Settings",
+        "LoadSession"))
 
     ; Чекбокс для режима пропуска разрешений
-    skipPermissionsCheckbox := mainGui.Add("Checkbox", "xp y+5 vSkipPermissions", "Запустить в режиме пропуска разрешений")
+    skipPermissionsCheckbox := mainGui.Add("Checkbox", "xp y+5 vSkipPermissions",
+        "Запустить в режиме пропуска разрешений")
     skipPermissionsCheckbox.Value := IniRead(CONFIG_FILE, "Settings", "SkipPermissions", "0") = "1"
     skipPermissionsCheckbox.OnEvent("Click", (*) => OnSkipPermissionsClick(skipPermissionsCheckbox, mainGui))
 
     ; Кнопка "Сброс"
     resetBtn := mainGui.Add("Button", "xp+359 yp-44 w86 h30", "Сброс")
     resetBtn.OnEvent("Click", (*) => ResetSession(folderCombo, statusText))
-    
+
     ; Кнопки Запустить и Закрыть
     launchBtn := mainGui.Add("Button", "xp y+m h30 Default", "Запустить")
     launchBtn.OnEvent("Click", (*) => OnLaunchClick(mainGui, folderCombo, launchBtn, cancelBtn, statusText))
@@ -400,8 +440,13 @@ ShowFolderSelectionGUI() {
     savedY := IniRead(CONFIG_FILE, "Window", "Y", "")
 
     if (savedX != "" && savedY != "" && IsInteger(savedX) && IsInteger(savedY)) {
-        mainGui.Show("x" savedX " y" savedY " w478")
-        Log("Окно показано в сохранённой позиции: X=" savedX ", Y=" savedY)
+        ; Валидируем координаты перед показом окна
+        defaultWidth := 478
+        defaultHeight := 400  ; Примерная начальная высота
+        validatedCoords := ValidateWindowPosition(Integer(savedX), Integer(savedY), defaultWidth, defaultHeight)
+
+        mainGui.Show("x" validatedCoords.x " y" validatedCoords.y " w478")
+        Log("Окно показано в сохранённой позиции: X=" validatedCoords.x ", Y=" validatedCoords.y)
     } else {
         mainGui.Show("w478")
         Log("Окно показано в позиции по умолчанию")
@@ -442,15 +487,62 @@ IsInteger(value) {
     return (value ~= "^-?\d+$")
 }
 
+; === ВАЛИДАЦИЯ ПОЗИЦИИ ОКНА ===
+ValidateWindowPosition(x, y, width, height) {
+    ; Получаем размеры всех мониторов
+    MonitorGetWorkArea(, &workLeft, &workTop, &workRight, &workBottom)
+
+    ; Минимальная видимая часть окна (в пикселях)
+    minVisibleWidth := 100
+    minVisibleHeight := 50
+
+    ; Проверяем, что окно не полностью за пределами экрана
+    ; Левая граница
+    if (x + width < minVisibleWidth) {
+        x := 0
+        Log("Координата X скорректирована: окно было за левой границей экрана")
+    }
+
+    ; Правая граница
+    if (x > workRight - minVisibleWidth) {
+        x := workRight - width
+        if (x < 0) {
+            x := 0
+        }
+        Log("Координата X скорректирована: окно было за правой границей экрана")
+    }
+
+    ; Верхняя граница
+    if (y + height < minVisibleHeight) {
+        y := 0
+        Log("Координата Y скорректирована: окно было за верхней границей экрана")
+    }
+
+    ; Нижняя граница
+    if (y > workBottom - minVisibleHeight) {
+        y := workBottom - height
+        if (y < 0) {
+            y := 0
+        }
+        Log("Координата Y скорректирована: окно было за нижней границей экрана")
+    }
+
+    return { x: x, y: y }
+}
+
 ; === СОХРАНЕНИЕ ПОЗИЦИИ ОКНА ===
 SaveWindowPosition() {
     global mainGui, CONFIG_FILE
 
     try {
-        mainGui.GetPos(&x, &y)
-        IniWrite(x, CONFIG_FILE, "Window", "X")
-        IniWrite(y, CONFIG_FILE, "Window", "Y")
-        Log("Позиция окна сохранена: X=" x ", Y=" y)
+        mainGui.GetPos(&x, &y, &width, &height)
+
+        ; Валидация координат перед сохранением
+        validatedCoords := ValidateWindowPosition(x, y, width, height)
+
+        IniWrite(validatedCoords.x, CONFIG_FILE, "Window", "X")
+        IniWrite(validatedCoords.y, CONFIG_FILE, "Window", "Y")
+        Log("Позиция окна сохранена: X=" validatedCoords.x ", Y=" validatedCoords.y)
     } catch as err {
         Log("Ошибка сохранения позиции окна: " err.Message, "ERROR")
     }
@@ -629,7 +721,7 @@ ResetSession(folderCombo, statusText) {
 
     ; Ищем JSON файл для этой папки
     foundFile := ""
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
             content := FileRead(A_LoopFileFullPath, "UTF-8")
             if RegExMatch(content, '"cwd"\s*:\s*"([^"]+)"', &cwdMatch) {
@@ -655,7 +747,8 @@ ResetSession(folderCombo, statusText) {
         ; Создаём диалоговое окно с чекбоксом
         confirmGui := Gui("+Owner" mainGui.Hwnd " +ToolWindow", "Подтверждение")
         confirmGui.SetFont("s10")
-        confirmGui.Add("Text", "x10 y10 w300", "Удалить сохранённую сессию для этой папки?`n`nПри следующем запуске откроется чистая сессия.")
+        confirmGui.Add("Text", "x10 y10 w300",
+            "Удалить сохранённую сессию для этой папки?`n`nПри следующем запуске откроется чистая сессия.")
 
         dontAskCB := confirmGui.Add("Checkbox", "x10 y+10", "Больше не спрашивать")
 
@@ -758,7 +851,7 @@ UpdateResetButtonState(folderCombo) {
 
     ; Ищем JSON файл для этой папки
     foundFile := false
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
             content := FileRead(A_LoopFileFullPath, "UTF-8")
             if RegExMatch(content, '"cwd"\s*:\s*"([^"]+)"', &cwdMatch) {
@@ -850,13 +943,14 @@ LaunchProcess(statusText, guiObj, launchBtn, cancelBtn) {
     startTime := A_TickCount
     found := false
 
-    Loop {
+    loop {
         ; Проверяем таймаут
         if ((A_TickCount - startTime) > (TIMEOUT_SECONDS * 1000)) {
             Log("Таймаут ожидания Omniroute (" TIMEOUT_SECONDS " сек)", "ERROR")
             statusText.Value := "Таймаут ожидания Omniroute!"
             statusText.SetFont("cRed")
-            MsgBox("Таймаут ожидания запуска Omniroute (" TIMEOUT_SECONDS " сек).`nПроверьте, что Omniroute установлен и работает корректно.", "Ошибка", "Icon!")
+            MsgBox("Таймаут ожидания запуска Omniroute (" TIMEOUT_SECONDS " сек).`nПроверьте, что Omniroute установлен и работает корректно.",
+                "Ошибка", "Icon!")
             launchBtn.Enabled := true
             return
         }
@@ -1000,25 +1094,95 @@ LaunchClaudeCode(statusText, guiObj, cancelBtn, launchBtn) {
         Log("Режим пропуска разрешений активирован")
     }
 
-    Log("Режим запуска: " (useTerminal ? (useNewTab ? "новая вкладка Windows Terminal" : "новое окно Windows Terminal") : "новое окно cmd"))
+    Log("Режим запуска: " (useTerminal ? (useNewTab ? "новая вкладка Windows Terminal" : "новое окно Windows Terminal") :
+        "новое окно cmd"))
 
     ; Получаем имя папки для заголовка окна
     folderName := GetFolderName(selectedFolder)
 
     try {
         if (useTerminal && useNewTab) {
-            Run('wt.exe -w 0 nt -d "' selectedFolder '" cmd /k "cc --name "' folderName '"' resumeCmd permissionsFlag '"', , , &cmdPID)
+            Run('wt.exe -w 0 nt -d "' selectedFolder '" cmd /k "cc --name \"' folderName '\"' resumeCmd permissionsFlag '"', , , &
+                wtPID)
         } else if (useTerminal) {
-            Run('wt.exe -d "' selectedFolder '" cmd /k "cc --name "' folderName '"' resumeCmd permissionsFlag '"', , , &cmdPID)
+            Run('wt.exe -d "' selectedFolder '" cmd /k "cc --name \"' folderName '\"' resumeCmd permissionsFlag '"', , , &
+                wtPID)
         } else {
-            Run('cmd.exe /k "cd /d "' selectedFolder '" && cc --name "' folderName '"' resumeCmd permissionsFlag '"', , , &cmdPID)
+            Run('cmd.exe /k "cd /d ^"' selectedFolder '^" && cc --name ^"' folderName '^"' resumeCmd permissionsFlag '"', , , &
+                wtPID)
         }
 
-        Log("Claude Code запущен с PID: " cmdPID)
+        Log("Процесс запущен с PID: " wtPID)
+
+        ; Для Windows Terminal нужно найти дочерний процесс cmd.exe
+        actualPID := 0
+        if (useTerminal) {
+            Log("Поиск процесса cmd.exe с именем сессии: " folderName)
+
+            ; Запоминаем существующие процессы cmd.exe перед запуском
+            existingPIDs := Map()
+            try {
+                result := ComObjGet("winmgmts:").ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='cmd.exe'")
+                for process in result {
+                    existingPIDs[process.ProcessId] := true
+                }
+            }
+
+            ; Ждём появления НОВОГО процесса cmd.exe с нужным именем в командной строке (до 5 секунд)
+            loop 50 {
+                Sleep(100)
+                try {
+                    ; Ищем cmd.exe с нашим именем сессии в командной строке
+                    result := ComObjGet("winmgmts:").ExecQuery(
+                        "SELECT ProcessId, CommandLine, CreationDate FROM Win32_Process WHERE Name='cmd.exe'")
+                    newestPID := 0
+                    newestTime := ""
+
+                    for process in result {
+                        cmdLine := process.CommandLine
+                        processPID := process.ProcessId
+
+                        ; Пропускаем существующие процессы
+                        if (existingPIDs.Has(processPID)) {
+                            continue
+                        }
+
+                        ; Проверяем, что это наш процесс (содержит имя папки и cc)
+                        if (InStr(cmdLine, folderName) && InStr(cmdLine, "cc")) {
+                            creationDate := process.CreationDate
+
+                            ; Выбираем самый новый процесс
+                            if (newestTime = "" || creationDate > newestTime) {
+                                newestPID := processPID
+                                newestTime := creationDate
+                            }
+                        }
+                    }
+
+                    if (newestPID > 0) {
+                        actualPID := newestPID
+                        Log("Найден новый процесс cmd.exe с PID: " actualPID)
+                        break
+                    }
+                }
+            }
+
+            if (actualPID = 0) {
+                Log("Процесс cmd.exe не найден за 5 секунд", "ERROR")
+                statusText.Value := "Ошибка: не найден процесс cmd.exe"
+                statusText.SetFont("cRed")
+                launchBtn.Enabled := true
+                return
+            }
+        } else {
+            actualPID := wtPID
+        }
+
+        Log("Claude Code запущен с PID: " actualPID)
 
         ; Регистрируем сессию с пустым sessionId (будет найден позже)
-        activeSessions[selectedFolder] := {pid: cmdPID, sessionId: ""}
-        Log("Сессия зарегистрирована: PID=" cmdPID)
+        activeSessions[selectedFolder] := { pid: actualPID, sessionId: "" }
+        Log("Сессия зарегистрирована: PID=" actualPID)
 
         ; Запускаем таймер поиска session ID
         StartSessionIdSearch(selectedFolder)
@@ -1046,7 +1210,7 @@ FindExistingSession(folderPath) {
     normalizedPath := StrLower(StrReplace(folderPath, "/", "\"))
     Log("Поиск существующей сессии для: " normalizedPath)
 
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
             ; Читаем файл в UTF-8 кодировке
             content := FileRead(A_LoopFileFullPath, "UTF-8")
@@ -1097,7 +1261,8 @@ InitProcessMonitoring() {
         ComObjConnect(wmiSink, "ProcessEvent_")
 
         ; Подписываемся на события завершения процессов
-        wmi.ExecNotificationQueryAsync(wmiSink, "SELECT * FROM __InstanceDeletionEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process'")
+        wmi.ExecNotificationQueryAsync(wmiSink,
+            "SELECT * FROM __InstanceDeletionEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process'")
     } catch {
         ; WMI не работает, но таймер уже запущен
     }
@@ -1186,7 +1351,7 @@ UpdateSessionsDisplay() {
 
     ; Создаём кнопки для каждой сессии
     ; Извлекаем координаты
-    sessionsContainer.GetPos(, &y) 
+    sessionsContainer.GetPos(, &y)
 
     ; Присваиваем значение вашей переменной
     yPos := y
@@ -1302,41 +1467,90 @@ ActivateSession(folderPath, pid) {
     folderName := GetFolderName(folderPath)
     Log("Поиск окна с именем папки: " folderName)
 
-    ; Стратегия 1: Ищем окно Windows Terminal или CMD по заголовку с именем папки
-    hwnd := WinExist("ahk_exe WindowsTerminal.exe ahk_class CASCADIA_HOSTING_WINDOW_CLASS")
-    if (hwnd) {
-        title := WinGetTitle("ahk_id " hwnd)
-        if InStr(title, folderName) {
-            Log("Найдено окно Windows Terminal по заголовку: " title)
-            try {
-                WinActivate("ahk_id " hwnd)
-                Log("Успешно переключено на окно сессии")
-                return
-            }
+    ; Стратегия 1: Для Windows Terminal - активируем окно и переключаем вкладку
+    wtHwnd := WinExist("ahk_exe WindowsTerminal.exe ahk_class CASCADIA_HOSTING_WINDOW_CLASS")
+    if (wtHwnd) {
+        Log("Найдено окно Windows Terminal: HWND=" wtHwnd)
+
+        ; Активируем окно Windows Terminal
+        WinActivate("ahk_id " wtHwnd)
+        Sleep(100)
+
+        ; Получаем текущий заголовок
+        currentTitle := WinGetTitle("ahk_id " wtHwnd)
+        Log("Текущий заголовок: " currentTitle)
+
+        ; Если нужная вкладка уже активна, просто возвращаемся
+        if InStr(currentTitle, folderName) {
+            Log("Нужная вкладка уже активна")
+            return
         }
+
+        ; Подсчитываем количество вкладок с Claude Code
+        try {
+            result := ComObjGet("winmgmts:").ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='cmd.exe'")
+            tabCount := 0
+            for process in result {
+                cmdLine := ""
+                try {
+                    cmdResult := ComObjGet("winmgmts:").ExecQuery(
+                        "SELECT CommandLine FROM Win32_Process WHERE ProcessId=" process.ProcessId)
+                    for cmd in cmdResult {
+                        cmdLine := cmd.CommandLine
+                        break
+                    }
+                }
+                if (InStr(cmdLine, "cc") && InStr(cmdLine, "--name")) {
+                    tabCount++
+                }
+            }
+            Log("Количество вкладок с Claude Code: " tabCount)
+
+            ; Перебираем вкладки через Ctrl+Tab, пока не найдём нужную
+            loop tabCount {
+                Send("^{Tab}")
+                Sleep(150)
+
+                newTitle := WinGetTitle("ahk_id " wtHwnd)
+                Log("Проверка вкладки " A_Index ": " newTitle)
+
+                if InStr(newTitle, folderName) {
+                    Log("Найдена нужная вкладка на позиции " A_Index)
+                    return
+                }
+            }
+
+            Log("Вкладка не найдена после перебора всех вкладок", "WARN")
+        }
+
+        return
     }
 
     ; Стратегия 2: Ищем окно CMD по заголовку
-    hwnd := WinExist("ahk_class ConsoleWindowClass")
-    Loop {
-        if (!hwnd)
+    cmdHwnd := 0
+    loop {
+        cmdHwnd := WinExist("ahk_class ConsoleWindowClass" (cmdHwnd ? " ahk_id " cmdHwnd : ""))
+        if (!cmdHwnd)
             break
-        title := WinGetTitle("ahk_id " hwnd)
+
+        title := WinGetTitle("ahk_id " cmdHwnd)
         if InStr(title, folderName) {
             Log("Найдено окно CMD по заголовку: " title)
             try {
-                WinActivate("ahk_id " hwnd)
-                Log("Успешно переключено на окно сессии")
+                WinActivate("ahk_id " cmdHwnd)
+                Log("Успешно переключено на окно CMD")
                 return
             }
         }
-        hwnd := WinExist("ahk_class ConsoleWindowClass ahk_id " hwnd)
+
+        ; Переходим к следующему окну CMD
+        cmdHwnd := WinExist("ahk_class ConsoleWindowClass ahk_id " cmdHwnd)
     }
 
-    ; Стратегия 3: Ищем по PID процесса
+    ; Стратегия 3: Ищем по PID процесса cmd.exe
     hwnd := WinExist("ahk_pid " pid)
     if (hwnd) {
-        Log("Найдено окно по PID: " pid)
+        Log("Найдено окно по PID cmd.exe: " pid)
         try {
             WinActivate("ahk_id " hwnd)
             Log("Успешно переключено на окно сессии")
@@ -1344,11 +1558,38 @@ ActivateSession(folderPath, pid) {
         }
     }
 
-    ; Стратегия 4: Ищем родительский процесс
+    ; Стратегия 4: Ищем родительский процесс (Windows Terminal)
     try {
         result := ComObjGet("winmgmts:").ExecQuery("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" pid)
         for process in result {
             parentPid := process.ParentProcessId
+
+            ; Проверяем, это Windows Terminal или conhost
+            parentResult := ComObjGet("winmgmts:").ExecQuery("SELECT Name FROM Win32_Process WHERE ProcessId=" parentPid
+            )
+            for parentProc in parentResult {
+                parentName := parentProc.Name
+                Log("Родительский процесс: " parentName " (PID=" parentPid ")")
+
+                ; Если родитель - conhost, ищем его родителя (Windows Terminal)
+                if (parentName = "conhost.exe") {
+                    grandParentResult := ComObjGet("winmgmts:").ExecQuery(
+                        "SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" parentPid)
+                    for grandParent in grandParentResult {
+                        grandParentPid := grandParent.ParentProcessId
+                        hwnd := WinExist("ahk_pid " grandParentPid)
+                        if (hwnd) {
+                            Log("Найдено окно Windows Terminal через conhost: PID=" grandParentPid)
+                            try {
+                                WinActivate("ahk_id " hwnd)
+                                Log("Успешно переключено на окно Windows Terminal")
+                                return
+                            }
+                        }
+                    }
+                }
+            }
+
             hwnd := WinExist("ahk_pid " parentPid)
             if (hwnd) {
                 Log("Найдено родительское окно: ParentPID=" parentPid)
@@ -1363,6 +1604,63 @@ ActivateSession(folderPath, pid) {
 
     Log("Окно сессии не найдено", "WARN")
     MsgBox("Не удалось найти окно сессии", "Ошибка", "Icon!")
+}
+
+; === ПРОВЕРКА, ЯВЛЯЕТСЯ ЛИ ПРОЦЕСС ПОТОМКОМ ===
+IsChildProcess(childPid, parentPid) {
+    try {
+        currentPid := childPid
+        loop 10 {  ; Максимум 10 уровней вложенности
+            result := ComObjGet("winmgmts:").ExecQuery("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" currentPid
+            )
+            for process in result {
+                currentParentPid := process.ParentProcessId
+                if (currentParentPid = parentPid) {
+                    return true
+                }
+                currentPid := currentParentPid
+                break
+            }
+        }
+    }
+    return false
+}
+
+; === ПЕРЕКЛЮЧЕНИЕ НА ВКЛАДКУ WINDOWS TERMINAL ===
+SwitchToTerminalTab(terminalHwnd, targetFolderName, maxAttempts := 10) {
+    Log("Поиск вкладки: " targetFolderName)
+
+    currentTitle := WinGetTitle("ahk_id " terminalHwnd)
+    startTitle := currentTitle
+
+    ; Если уже на нужной вкладке
+    if InStr(currentTitle, targetFolderName) {
+        Log("Вкладка уже активна")
+        return true
+    }
+
+    ; Перебираем вкладки
+    loop maxAttempts {
+        Send("^{Tab}")
+        Sleep(250)
+
+        newTitle := WinGetTitle("ahk_id " terminalHwnd)
+        Log("Проверка вкладки " A_Index ": " newTitle)
+
+        if InStr(newTitle, targetFolderName) {
+            Log("Найдена нужная вкладка на попытке " A_Index)
+            return true
+        }
+
+        ; Если вернулись к начальной вкладке, значит прошли полный круг
+        if (newTitle = startTitle && A_Index > 1) {
+            Log("Прошли все вкладки, целевая не найдена")
+            return false
+        }
+    }
+
+    Log("Не удалось найти вкладку за " maxAttempts " попыток")
+    return false
 }
 
 ; === ЗАКРЫТИЕ СЕССИИ ===
@@ -1404,13 +1702,9 @@ CloseSession(folderPath, pid) {
         ; Ищем окно Windows Terminal
         wtHwnd := WinExist("ahk_exe WindowsTerminal.exe")
         if (wtHwnd) {
-            folderName := GetFolderName(folderPath)
-            title := WinGetTitle("ahk_id " wtHwnd)
-            if InStr(title, folderName) {
-                isWindowsTerminal := true
-                terminalHwnd := wtHwnd
-                Log("Найдено окно Windows Terminal: HWND=" terminalHwnd)
-            }
+            isWindowsTerminal := true
+            terminalHwnd := wtHwnd
+            Log("Найдено окно Windows Terminal: HWND=" terminalHwnd)
         }
 
         ; Если не Windows Terminal, ищем CMD
@@ -1421,7 +1715,8 @@ CloseSession(folderPath, pid) {
             if (!terminalHwnd) {
                 ; Если не найдено, ищем родительский процесс (cmd.exe)
                 try {
-                    result := ComObjGet("winmgmts:").ExecQuery("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" pid)
+                    result := ComObjGet("winmgmts:").ExecQuery(
+                        "SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" pid)
                     for process in result {
                         parentPid := process.ParentProcessId
                         Log("Найден родительский процесс: PID=" parentPid)
@@ -1440,19 +1735,94 @@ CloseSession(folderPath, pid) {
         if (terminalHwnd) {
             Log("Закрытие " (isWindowsTerminal ? "вкладки Windows Terminal" : "окна терминала") ": HWND=" terminalHwnd)
 
-            ; Активируем окно
-            WinActivate("ahk_id " terminalHwnd)
-            Sleep(100)
-
-            ; Отправляем Ctrl+C для прерывания Claude Code
-            Send("^c")
-            Sleep(300)
-
+            ; Для Windows Terminal закрываем вкладку через Ctrl+Shift+W
             if (isWindowsTerminal) {
-                ; Для Windows Terminal закрываем вкладку через Ctrl+Shift+W
-                Send("^+w")
-                Log("Отправлена команда закрытия вкладки (Ctrl+Shift+W)")
+                Log("Закрытие вкладки Windows Terminal: PID=" pid)
+
+                ; Активируем окно Windows Terminal
+                WinActivate("ahk_id " terminalHwnd)
+                Sleep(200)
+
+                ; Получаем имя папки для поиска вкладки
+                folderName := GetFolderName(folderPath)
+                currentTitle := WinGetTitle("ahk_id " terminalHwnd)
+                Log("Текущий заголовок: " currentTitle)
+
+                ; Проверяем, активна ли нужная вкладка
+                isTargetTabActive := InStr(currentTitle, folderName)
+
+                if (!isTargetTabActive) {
+                    Log("Переключение на вкладку: " folderName)
+
+                    ; Используем новую функцию для переключения
+                    switchSuccess := SwitchToTerminalTab(terminalHwnd, folderName, 10)
+
+                    if (!switchSuccess) {
+                        Log("Не удалось переключиться на вкладку, используем принудительное завершение", "WARN")
+                        ; Завершаем процесс напрямую
+                        try {
+                            RunWait('taskkill /PID ' pid ' /T /F', , "Hide")
+                            Log("Процесс завершён через taskkill")
+                        } catch as err {
+                            Log("Ошибка taskkill: " err.Message, "ERROR")
+                        }
+                        goto CleanupSession
+                    }
+                }
+
+                ; Отправляем Ctrl+C для завершения процесса
+                Log("Отправка Ctrl+C для завершения процесса")
+                Send("^c")
+                Sleep(500)
+
+                ; Проверяем, завершился ли процесс
+                processTerminated := false
+                loop 10 {
+                    if !ProcessExist(pid) {
+                        Log("Процесс завершён после Ctrl+C")
+                        processTerminated := true
+                        break
+                    }
+                    Sleep(100)
+                }
+
+                ; Если процесс не завершился, используем taskkill
+                if (!processTerminated) {
+                    Log("Процесс не завершился, используем taskkill", "WARN")
+                    try {
+                        RunWait('taskkill /PID ' pid ' /T /F', , "Hide")
+                        Sleep(300)
+                        Log("Процесс завершён через taskkill")
+                    } catch as err {
+                        Log("Ошибка taskkill: " err.Message, "ERROR")
+                    }
+                }
+
+                ; Закрываем вкладку через Ctrl+D (работает для вкладок с сообщением об ошибке)
+                Log("Отправка Ctrl+D для закрытия вкладки")
+                Send("^d")
+                Sleep(200)
             } else {
+                ; Для CMD используем старый метод
+                ; Активируем окно
+                WinActivate("ahk_id " terminalHwnd)
+                Sleep(100)
+
+                ; Отправляем Ctrl+C для прерывания Claude Code
+                Send("^c")
+                Log("Отправлен Ctrl+C для прерывания Claude Code")
+
+                ; Ждём завершения процесса Claude Code (до 3 секунд)
+                processTerminated := false
+                loop 30 {
+                    if !ProcessExist(pid) {
+                        processTerminated := true
+                        Log("Процесс cmd.exe завершён после Ctrl+C")
+                        break
+                    }
+                    Sleep(100)
+                }
+
                 ; Для CMD отправляем exit
                 Send("exit{Enter}")
                 Sleep(500)
@@ -1471,7 +1841,7 @@ CloseSession(folderPath, pid) {
         }
 
         ; Ждём завершения процесса
-        Loop 10 {
+        loop 10 {
             if !ProcessExist(pid) {
                 Log("Процесс успешно завершён")
                 break
@@ -1489,6 +1859,7 @@ CloseSession(folderPath, pid) {
         Log("Ошибка при закрытии сессии: " err.Message, "ERROR")
     }
 
+CleanupSession:
     ; Удаляем из списка (проверяем существование)
     if activeSessions.Has(folderPath) {
         activeSessions.Delete(folderPath)
@@ -1509,13 +1880,13 @@ StartSessionIdSearch(folderPath) {
 
     ; Получаем список существующих файлов (чтобы не читать их повторно)
     knownFiles := Map()
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         knownFiles[A_LoopFileName] := true
     }
 
     ; Создаём таймер
     timerFunc := () => SearchSessionIdTimer(folderPath)
-    sessionSearchTimers[folderPath] := {timer: timerFunc, knownFiles: knownFiles, attempts: 0}
+    sessionSearchTimers[folderPath] := { timer: timerFunc, knownFiles: knownFiles, attempts: 0 }
 
     SetTimer(timerFunc, 1000)
 }
@@ -1537,7 +1908,7 @@ SearchSessionIdTimer(folderPath) {
     normalizedPath := StrReplace(folderPath, "/", "\")
 
     ; Проверяем новые файлы
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         fileName := A_LoopFileName
 
         ; Пропускаем уже известные файлы
@@ -1607,7 +1978,7 @@ CallSessionEndHook(folderPath, sessionId) {
 
     ; Ищем JSON файл сессии
     sessionFile := ""
-    Loop Files, CLAUDE_SESSIONS_DIR "\*.json" {
+    loop files, CLAUDE_SESSIONS_DIR "\*.json" {
         try {
             content := FileRead(A_LoopFileFullPath, "UTF-8")
             if InStr(content, sessionId) {
@@ -1688,7 +2059,8 @@ OnMouseMove(wParam, lParam, msg, hwnd) {
     ; Определяем текст подсказки по типу и тексту контрола
     if (ctrl.Type = "Button") {
         if (ctrl.Text = "Сброс") {
-            text := "Удаляет сохранённую сессию для выбранной папки.`nПри следующем запуске откроется чистая сессия.`nИспользуйте для исправления ошибки 'No conversation found'."
+            text :=
+                "Удаляет сохранённую сессию для выбранной папки.`nПри следующем запуске откроется чистая сессия.`nИспользуйте для исправления ошибки 'No conversation found'."
         }
     } else if (ctrl.Type = "CheckBox") {
         if (InStr(ctrl.Text, "Загружать прошлую сессию")) {
