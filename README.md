@@ -20,7 +20,7 @@
 
 ## Возможности
 
-<img width="450" alt="Screenshot-v1.3.5" src="https://github.com/user-attachments/assets/7cff711b-dc46-4f97-b5ae-e5f35f678818" align="right"/>
+<img width="450" alt="Screenshot-v1.3.5" src="https://github.com/KiM38RuS/Claude-Code-Launcher/releases/download/v1.3.5/Screenshot-v1.3.5.png" align="right"/>
 
 **Основное:**
 * GUI с историей последних 10 папок
